@@ -1,7 +1,7 @@
 import Head from "next/head";
 import { Analytics } from "@vercel/analytics/next";
 import { useEnabledCountries } from "../../hooks/data";
-import { statusProductsFor, useProductStatuses } from "../hooks/useStatus";
+import { statusProductsFor, useProductStatusesWithState } from "../hooks/useStatus";
 import useGlobalState from "../helpers/globalState";
 import StatusBanner from "./StatusBanner";
 
@@ -15,7 +15,9 @@ const Layout = ({ children }: ILayout) => {
   // One Status API call; the rows kept are the enabled countries' products, or the sites
   // product on /sites. See `statusProductsFor`.
   const enabledCountries = useEnabledCountries();
-  const statuses = useProductStatuses(statusProductsFor(isSitesChart, enabledCountries));
+  const { statuses, error: statusError } = useProductStatusesWithState(
+    statusProductsFor(isSitesChart, enabledCountries)
+  );
   const [comparison] = useGlobalState("comparison");
   // Replaces `getViewTitle(view)` (Wave 4): the three titles it produced — "PV Forecast",
   // "Delta", "Solar Sites" — now come from the two facts that used to be folded into `view`,
@@ -39,7 +41,7 @@ const Layout = ({ children }: ILayout) => {
           floating pane that escapes its container from giving the whole page a horizontal
           scrollbar, which is never what is wanted on a full-height app shell. */}
       <main className="flex h-screen flex-col overflow-x-hidden">
-        <StatusBanner statuses={statuses} />
+        <StatusBanner statuses={statuses} statusUnavailable={Boolean(statusError)} />
         {children}
         <Analytics />
       </main>

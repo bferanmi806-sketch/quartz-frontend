@@ -6,6 +6,7 @@ import { CrossInlineSmall } from "../icons/icons";
 
 interface StatusBannerProps {
   statuses: ProductStatus[];
+  statusUnavailable?: boolean;
 }
 
 /**
@@ -28,18 +29,26 @@ const LEVEL_STYLES: Record<Exclude<StatusLevel, "ok">, { emoji: string; accent: 
   info: { emoji: "ℹ️", accent: "border-content-secondary" }
 };
 
-const StatusBanner = ({ statuses }: StatusBannerProps) => {
+const StatusBanner = ({ statuses, statusUnavailable = false }: StatusBannerProps) => {
   const { isDismissed, dismiss } = useDismissedStatuses();
 
   const ordered = orderStatuses(statuses);
   const visible = ordered.filter((status) => !isDismissed(status));
 
-  if (!visible.length) {
+  if (!visible.length && !statusUnavailable) {
     return null;
   }
 
   return (
     <div className="flex flex-col">
+      {statusUnavailable && (
+        <p
+          role="status"
+          className="border-l border-content-muted bg-surface-sunken px-4 py-2 text-sm text-content-secondary"
+        >
+          Status updates temporarily unavailable
+        </p>
+      )}
       {visible.map((status) => {
         const { emoji, accent } = LEVEL_STYLES[status.status as Exclude<StatusLevel, "ok">];
 

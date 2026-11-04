@@ -96,19 +96,23 @@ export const statusProductsFor = (
 
 /**
  * The statuses of `shownProducts` (see `statusProductsFor`), normalised. `ok` rows are
- * included — filtering them out is the banner's call, not the transport's.
- *
- * Returns `[]` when `NEXT_PUBLIC_STATUS_URL` is unset (the SWR key goes `null`, so nothing
- * is fetched), while the first request is in flight, and while the service is failing — the
- * banner then renders nothing rather than the app erroring.
+ * included — filtering them out is the banner's call, not the transport's. The existing
+ * array-only hook remains available for consumers that do not need request state;
+ * `useProductStatusesWithState` also exposes loading and error state to the page banner.
  *
  * The SWR key is the bare URL, with no caller-specific part, so every consumer of this hook
  * on a page shares one entry whatever `shownProducts` it passes: the filter below runs on
  * the shared body, not in the request.
  */
-export const useProductStatuses = (shownProducts: StatusProductKey[]): ProductStatus[] => {
+export interface ProductStatusesState {
+  statuses: ProductStatus[];
+  error: Error | undefined;
+  isLoading: boolean;
+}
+
+const useProductsResponse = () => {
   const url = statusUrl();
-  const { data } = useSWR<ProductsResponse, Error>(
+  return useSWR<ProductsResponse, Error>(
     url ? `${url}/products` : null,
     fetchJson<ProductsResponse>,
     {
@@ -119,22 +123,21 @@ export const useProductStatuses = (shownProducts: StatusProductKey[]): ProductSt
       ...apiV1SwrOptions,
       refreshInterval: STATUS_REFRESH_INTERVAL_MS,
       dedupingInterval: STATUS_REFRESH_INTERVAL_MS,
-      // The outage itself is never shown. A 503 "status store unavailable" — the API staying
-      // up and answering honestly that its database is down — reads as silence, the same as
-      // all-clear: a full-width banner is too shouty for "we cannot currently tell you", and
-      // the lamps have no level for it either. Retrying quietly is the whole response.
-      //
-      // Nor is it reported. `_app.tsx` installs a global `onError` that sends reportable
-      // failures to Sentry; this per-hook `onError` replaces it for this key (SWR merges
-      // hook config over context config field by field), because a status service being
-      // down is that service's incident, not this app's, and one event per retry per client
-      // would drown the data-API failures that are.
+      // The banner surfaces a generic unavailable notice from this error state. Do not send
+      // the Status API's own outage to the app's global Sentry reporter: SWR merges this
+      // per-hook callback over `_app.tsx`'s handler for this key, and retries can be frequent.
       onError: () => {}
     }
   );
+};
+
+export const useProductStatusesWithState = (
+  shownProducts: StatusProductKey[]
+): ProductStatusesState => {
+  const { data, error, isLoading } = useProductsResponse();
 
   const products = data?.products;
-  if (!Array.isArray(products)) return [];
+  if (!Array.isArray(products)) return { statuses: [], error, isLoading };
 
   // The one request still fetches every product; the page's list decides which are kept.
   // This is the only filter: nothing here reads the token's `products` claim.
@@ -144,10 +147,16 @@ export const useProductStatuses = (shownProducts: StatusProductKey[]): ProductSt
   // and the cost is that a newly launched product needs one line of config before its
   // banner appears.
   const shown = shownProducts as string[];
-  return products
+  const statuses = products
     .filter((product) => isKnownProduct(product.key) && shown.includes(product.key))
     .map(normaliseProduct);
+
+  return { statuses, error, isLoading };
 };
+
+/** Preserve the array-only contract for country lamps and existing hook consumers. */
+export const useProductStatuses = (shownProducts: StatusProductKey[]): ProductStatus[] =>
+  useProductStatusesWithState(shownProducts).statuses;
 
 /**
  * The rows the banner should actually draw, worst first.

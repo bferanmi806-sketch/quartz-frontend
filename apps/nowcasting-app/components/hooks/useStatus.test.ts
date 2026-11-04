@@ -16,7 +16,12 @@ import { SWRConfig } from "swr";
 
 import type { ProductsResponse } from "../types";
 import { FetchJsonError } from "../../lib/api/fetch-json";
-import { normaliseLevel, normaliseMessage, useProductStatuses } from "./useStatus";
+import {
+  normaliseLevel,
+  normaliseMessage,
+  useProductStatuses,
+  useProductStatusesWithState
+} from "./useStatus";
 
 describe("normaliseLevel", () => {
   test("passes through every level the API spec publishes", () => {
@@ -65,8 +70,8 @@ describe("normaliseMessage", () => {
 
 /**
  * The transport: the real `fetchJson` over MSW, so the hook is tested the way it runs —
- * no bearer token, no `UI=true`, one shared `/products` request, and an outage that stays
- * quiet rather than throwing, reporting or freezing.
+ * no bearer token, no `UI=true`, one shared `/products` request, and an outage that is
+ * available to the UI while staying out of the global error reporter.
  */
 describe("useProductStatuses", () => {
   const STATUS_URL = "https://status.test";
@@ -194,21 +199,28 @@ describe("useProductStatuses", () => {
     expect(result.current).toEqual([]);
   });
 
-  // The decision: retry quietly, never surface the status service's own outage — not as a
-  // banner, not as a Sentry event. The global reporter must not hear about it.
-  test("an outage yields [] and is not passed to the global onError", async () => {
+  test("a 503 is exposed to the UI, retried, and not passed to the global onError", async () => {
+    let attempt = 0;
     server.use(
       http.get(PRODUCTS_URL, () => {
         requestCount++;
-        return HttpResponse.json({ detail: "status store unavailable" }, { status: 503 });
+        if (attempt++ === 0) {
+          return HttpResponse.json({ detail: "status store unavailable" }, { status: 503 });
+        }
+        return HttpResponse.json(PAYLOAD);
       })
     );
-    const { result } = renderHook(() => useProductStatuses(["gb-solar"]), { wrapper });
+    const { result } = renderHook(() => useProductStatusesWithState(["gb-solar"]), { wrapper });
 
-    await waitFor(() => expect(entry()?.error).toBeInstanceOf(FetchJsonError));
+    await waitFor(() => expect(result.current.error).toBeInstanceOf(FetchJsonError));
+    expect(result.current.isLoading).toBe(false);
     expect((entry()?.error as FetchJsonError).status).toBe(503);
-    expect(result.current).toEqual([]);
+    expect(result.current.statuses).toEqual([]);
     expect(onError).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(result.current.error).toBeUndefined(), { timeout: 5000 });
+    expect(result.current.statuses).toHaveLength(1);
+    expect(requestCount).toBe(2);
   });
 
   test("fetches nothing when NEXT_PUBLIC_STATUS_URL is unset", async () => {

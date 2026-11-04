@@ -12,7 +12,7 @@ import { setupServer } from "msw/node";
 import { SWRConfig } from "swr";
 
 import type { ProductStatus, ProductsResponse, StatusLevel } from "../../components/types";
-import { useProductStatuses } from "../../components/hooks/useStatus";
+import { useProductStatusesWithState } from "../../components/hooks/useStatus";
 import { FetchJsonError } from "../../lib/api/fetch-json";
 import { lampLevelFor, useCountryStatus } from "./use-country-status";
 
@@ -250,7 +250,7 @@ describe("useCountryStatus", () => {
 
     const { result } = renderHook(
       () => ({
-        banner: useProductStatuses(["gb-solar", "nl-solar"]),
+        banner: useProductStatusesWithState(["gb-solar", "nl-solar"]),
         gb: useCountryStatus("GB"),
         nl: useCountryStatus("NL"),
         de: useCountryStatus("DE")
@@ -258,10 +258,41 @@ describe("useCountryStatus", () => {
       { wrapper }
     );
 
-    await waitFor(() => expect(result.current.banner).toHaveLength(2));
+    await waitFor(() => expect(result.current.banner.statuses).toHaveLength(2));
+    expect(result.current.banner.error).toBeUndefined();
     expect(result.current.gb).toEqual({ level: "error", message: "GB down" });
     expect(result.current.nl).toEqual({ level: "ok", message: null });
     expect(result.current.de).toEqual({ level: "ok", message: null });
     expect(requestCount).toBe(1);
+  });
+
+  test("a shared API failure leaves country lamps quiet until status data recovers", async () => {
+    served = payload(product("gb-solar", "error", "GB down"));
+    let attempt = 0;
+    server.use(
+      http.get(PRODUCTS_URL, () => {
+        requestCount++;
+        if (attempt++ === 0) {
+          return HttpResponse.json({ detail: "status store unavailable" }, { status: 503 });
+        }
+        return HttpResponse.json(served);
+      })
+    );
+
+    const { result } = renderHook(
+      () => ({
+        banner: useProductStatusesWithState(["gb-solar"]),
+        gb: useCountryStatus("GB")
+      }),
+      { wrapper }
+    );
+
+    await waitFor(() => expect(result.current.banner.error).toBeInstanceOf(FetchJsonError));
+    expect(result.current.banner.statuses).toEqual([]);
+    expect(result.current.gb).toEqual({ level: "ok", message: null });
+
+    await waitFor(() => expect(result.current.banner.error).toBeUndefined(), { timeout: 5000 });
+    expect(result.current.gb).toEqual({ level: "error", message: "GB down" });
+    expect(requestCount).toBe(2);
   });
 });

@@ -14,7 +14,7 @@ import { setupServer } from "msw/node";
 import { SWRConfig } from "swr";
 import type { ProductsResponse, ProductStatus } from "../types";
 import StatusBanner from "../layout/StatusBanner";
-import { statusProductsFor, useProductStatuses } from "./useStatus";
+import { statusProductsFor, useProductStatusesWithState } from "./useStatus";
 
 const incident = (key: string, name: string): ProductStatus => ({
   key,
@@ -40,21 +40,30 @@ const PAYLOAD: ProductsResponse = {
 
 const STATUS_URL = "https://status.test";
 
-const server = setupServer(http.get(`${STATUS_URL}/products`, () => HttpResponse.json(PAYLOAD)));
+let requestCount = 0;
+const server = setupServer(
+  http.get(`${STATUS_URL}/products`, () => {
+    requestCount++;
+    return HttpResponse.json(PAYLOAD);
+  })
+);
 
 beforeAll(() => {
   process.env.NEXT_PUBLIC_STATUS_URL = STATUS_URL;
   server.listen({ onUnhandledRequest: "error" });
 });
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  server.resetHandlers();
+  requestCount = 0;
+});
 afterAll(() => {
   delete process.env.NEXT_PUBLIC_STATUS_URL;
   server.close();
 });
 
 const Banner = ({ isSitesChart, enabled }: { isSitesChart: boolean; enabled: string[] }) => {
-  const statuses = useProductStatuses(statusProductsFor(isSitesChart, enabled));
-  return <StatusBanner statuses={statuses} />;
+  const { statuses, error } = useProductStatusesWithState(statusProductsFor(isSitesChart, enabled));
+  return <StatusBanner statuses={statuses} statusUnavailable={Boolean(error)} />;
 };
 
 const renderBanner = (isSitesChart: boolean, enabled: string[]) =>
@@ -85,6 +94,7 @@ describe("status banner rows by page", () => {
     await waitFor(() => expect(screen.queryByText(/GB Solar incident/)).not.toBeNull());
     expect(screen.queryByText(/NL Solar incident/)).not.toBeNull();
     expect(screen.queryByText(/Asset Solar incident/)).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   test("with only GB enabled, an NL incident does not show", async () => {
@@ -105,5 +115,71 @@ describe("status banner rows by page", () => {
     await waitFor(() => expect(screen.queryByText(/GB Solar incident/)).not.toBeNull());
     expect(screen.queryByText(/DE Solar incident/)).toBeNull();
     expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
+  test("a Status API 503 shows a separate notice and clears after automatic recovery", async () => {
+    let attempt = 0;
+    server.use(
+      http.get(`${STATUS_URL}/products`, () => {
+        requestCount++;
+        if (attempt++ === 0) {
+          return HttpResponse.json({ detail: "status store unavailable" }, { status: 503 });
+        }
+        return HttpResponse.json(PAYLOAD);
+      })
+    );
+
+    renderBanner(false, ["GB"]);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Status updates temporarily unavailable"
+    );
+    expect(screen.getByRole("status").textContent).not.toMatch(/forecast/i);
+
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull(), { timeout: 5000 });
+    expect(await screen.findByText(/GB Solar incident/)).toBeInTheDocument();
+    expect(requestCount).toBe(2);
+  });
+
+  test("a network failure shows the same notice and recovers on the next successful request", async () => {
+    let attempt = 0;
+    server.use(
+      http.get(`${STATUS_URL}/products`, () => {
+        requestCount++;
+        if (attempt++ === 0) return HttpResponse.error();
+        return HttpResponse.json(PAYLOAD);
+      })
+    );
+
+    renderBanner(false, ["GB"]);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Status updates temporarily unavailable"
+    );
+
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull(), { timeout: 5000 });
+    expect(await screen.findByText(/GB Solar incident/)).toBeInTheDocument();
+    expect(requestCount).toBe(2);
+  });
+
+  test("an initial request stays quiet while loading", async () => {
+    let releaseResponse: () => void = () => {};
+    let requestStarted = false;
+    const responseGate = new Promise<void>((resolve) => {
+      releaseResponse = resolve;
+    });
+    server.use(
+      http.get(`${STATUS_URL}/products`, async () => {
+        requestStarted = true;
+        await responseGate;
+        return HttpResponse.json(PAYLOAD);
+      })
+    );
+
+    renderBanner(false, ["GB"]);
+    await waitFor(() => expect(requestStarted).toBe(true));
+    expect(screen.queryByRole("status")).toBeNull();
+
+    releaseResponse();
+    expect(await screen.findByText(/GB Solar incident/)).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
