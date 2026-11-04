@@ -29,6 +29,19 @@ const LEVEL_STYLES: Record<Exclude<StatusLevel, "ok">, { emoji: string; accent: 
   info: { emoji: "ℹ️", accent: "border-content-secondary" }
 };
 
+const StatusUnavailableIcon = () => (
+  <svg
+    aria-hidden="true"
+    className="h-4 w-4 shrink-0 text-content-muted"
+    fill="none"
+    viewBox="0 0 16 16"
+  >
+    <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M8 7.25v3" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
+    <circle cx="8" cy="5.25" r="0.75" fill="currentColor" />
+  </svg>
+);
+
 const StatusBanner = ({ statuses, statusUnavailable = false }: StatusBannerProps) => {
   const { isDismissed, dismiss } = useDismissedStatuses();
 
@@ -42,12 +55,13 @@ const StatusBanner = ({ statuses, statusUnavailable = false }: StatusBannerProps
   return (
     <div className="flex flex-col">
       {statusUnavailable && (
-        <p
+        <div
           role="status"
-          className="border-l border-content-muted bg-surface-sunken px-4 py-2 text-sm text-content-secondary"
+          className="flex items-center gap-3 border-l-4 border-content-muted bg-surface-sunken px-4 py-2 text-content-secondary"
         >
-          Status updates temporarily unavailable
-        </p>
+          <StatusUnavailableIcon />
+          <p className="flex-1">Status updates temporarily unavailable</p>
+        </div>
       )}
       {visible.map((status) => {
         const { emoji, accent } = LEVEL_STYLES[status.status as Exclude<StatusLevel, "ok">];

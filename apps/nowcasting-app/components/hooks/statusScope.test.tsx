@@ -130,10 +130,10 @@ describe("status banner rows by page", () => {
     );
 
     renderBanner(false, ["GB"]);
-    expect(await screen.findByRole("status")).toHaveTextContent(
-      "Status updates temporarily unavailable"
-    );
-    expect(screen.getByRole("status").textContent).not.toMatch(/forecast/i);
+    const unavailableNotice = await screen.findByRole("status");
+    expect(unavailableNotice).toHaveTextContent("Status updates temporarily unavailable");
+    expect(unavailableNotice.textContent).not.toMatch(/forecast/i);
+    expect(unavailableNotice.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
 
     await waitFor(() => expect(screen.queryByRole("status")).toBeNull(), { timeout: 5000 });
     expect(await screen.findByText(/GB Solar incident/)).toBeInTheDocument();
